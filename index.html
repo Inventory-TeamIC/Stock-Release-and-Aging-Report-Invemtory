@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stock Released Sale Order</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+*{box-sizing:border-box}body{font-family:Segoe UI,Arial,sans-serif;margin:0;background:#f3f5f9;color:#1d2433;font-size:13px}
+header{background:#0b2a6f;color:#fff;padding:14px 22px}header h1{margin:0;font-size:18px}header p{margin:3px 0 0;opacity:.8}
+main{padding:16px 22px}.card{background:#fff;border-radius:8px;padding:14px;margin-bottom:14px;box-shadow:0 1px 3px #0002}
+.row{display:flex;gap:14px;flex-wrap:wrap;align-items:end}.row label{display:block;font-weight:600;margin-bottom:4px}
+button{background:#0b2a6f;color:#fff;border:0;padding:8px 16px;border-radius:5px;cursor:pointer;font-weight:600}button:disabled{opacity:.4;cursor:default}
+button.g{background:#1a7f45}select,input[type=file]{padding:5px;border:1px solid #bbb;border-radius:5px;background:#fff}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}.k{border-radius:8px;padding:10px;background:#eef2fb}
+.k b{font-size:22px;display:block}.k.ok{background:#e3f6ea}.k.wa{background:#fff3d6}.k.bad{background:#fde5e5}
+h2{font-size:15px;margin:0 0 8px;color:#0b2a6f}.sc{overflow:auto;max-height:420px}table{border-collapse:collapse;width:100%}
+th{background:#0b2a6f;color:#fff;padding:6px 8px;text-align:left;position:sticky;top:0;white-space:nowrap}td{padding:5px 8px;border-bottom:1px solid #e3e6ee;white-space:nowrap}
+td.n{text-align:right}.s{padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700}.Full,.Available{background:#c9efd7;color:#0d6b36}
+.Partial{background:#ffe6a3;color:#7a5600}.None,.NotAvailable{background:#f8c7c7;color:#9b1c1c}
+.bar{background:#e3e6ee;border-radius:4px;height:8px;width:70px;display:inline-block;vertical-align:middle;margin-right:5px}.bar i{display:block;height:8px;border-radius:4px;background:#1a7f45}
+ul{margin:0;padding-left:18px}li{margin-bottom:5px}.msg{color:#9b1c1c;font-weight:600}
+</style></head><body>
+<header><h1>Stock Released Sale Order</h1><p>Reconcile Draft Sales Order Listing Report with Stock Aging Available for Sale &mdash; by Item</p></header>
+<main>
+<div class="card"><div class="row">
+<div><label>1. Draft Sales Order Listing Report (.xlsx)</label><input type="file" id="fso" accept=".xlsx,.xls"></div>
+<div><label>2. Stock Aging Available for Sale (.xlsx)</label><input type="file" id="fst" accept=".xlsx,.xls"></div>
+<div><label>Release priority</label><select id="prio"><option value="order">Order Date &amp; Time (first come, first served)</option><option value="plan">Plan Delivery date first</option></select></div>
+<div><label><input type="checkbox" id="disc" checked> Include Trade Discount lines</label></div>
+<button id="go" disabled>Reconcile</button><button id="ex" class="g" disabled>Export Summary Excel</button>
+</div><p id="msg" class="msg"></p></div>
+<div id="out"></div>
+</main>
+<script>
+const $=id=>document.getElementById(id);let SO=null,ST=null,R=null;
+const norm=x=>String(x==null?'':x).trim().replace(/-01$/,'');
+const num=x=>{const n=parseFloat(String(x).replace(/,/g,''));return isNaN(n)?0:n};
+const esc=s=>String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const fmt=n=>Number(n).toLocaleString(undefined,{maximumFractionDigits:1});
+const MON={jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+function read(f,test){return new Promise(res=>{const r=new FileReader();r.onload=e=>{const wb=XLSX.read(e.target.result,{type:'array'});
+ for(const n of wb.SheetNames){const rows=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,defval:'',raw:true});
+  const hi=rows.findIndex(r=>r.some(c=>test(String(c).replace(/\s+/g,' ').trim())));
+  if(hi>=0){const h=rows[hi].map(c=>String(c).replace(/\s+/g,' ').trim());
+   return res(rows.slice(hi+1).filter(r=>r.some(c=>c!=='')).map(r=>{const o={};h.forEach((k,i)=>{if(k)o[k]=r[i]});return o}))}}
+ res(null)};r.readAsArrayBuffer(f)})}
+function odt(o){const v=o['Order Date'];let t=0;const m=String(v).match(/(\d+)-(\w+)-(\d+)/);
+ if(m){const d=new Date(+m[3],MON[m[2].toLowerCase().slice(0,3)],+m[1]);const tm=String(o['Order Time']).match(/(\d+):(\d+)\s*(AM|PM)?/i);
+  if(tm){let h=+tm[1]%12;if(/pm/i.test(tm[3]||''))h+=12;d.setHours(h,+tm[2])}t=d.getTime()}else if(typeof v==='number')t=(v-25569)*864e5;return t}
+const fd=v=>typeof v==='number'&&v>20000?new Date(Math.round((v-25569)*864e5)).toISOString().slice(0,10):(v||'');
+async function load(inp,key,test,label){const f=inp.files[0];if(!f)return;const d=await read(f,test);
+ if(!d){$('msg').textContent='Cannot find the header "'+key+'" in '+label;return}
+ $('msg').textContent='';if(key==='Sale Order')SO=d;else ST=d;$('go').disabled=!(SO&&ST)}
+$('fso').onchange=()=>load($('fso'),'Sale Order',t=>t.startsWith('Sale Order'),'Sales Order file');
+$('fst').onchange=()=>load($('fst'),'Balances',t=>t==='Balances','Stock Aging file');
+$('go').onclick=()=>{run();render()};$('ex').onclick=exportXlsx;
+
+function run(){
+ const stock={};
+ ST.forEach(r=>{const k=norm(r['Item Nº']);if(!k)return;const s=stock[k]||(stock[k]={desc:r['Descriptions'],tot:0,WHA:0,WHB:0});
+  const b=num(r['Balances']);s.tot+=b;const w=String(r['WH Nº']).trim();if(w in s)s[w]+=b});
+ let L=SO.map((o,i)=>{const rem=o['Quantity Remaining'];return{so:o['Sale Order Nº'],cust:o['Customer Name'],ch:o['Channel'],reg:o['Reginal Name'],
+  pd:o['Plan Devlivery']!==undefined?o['Plan Devlivery']:o['Plan Delivery'],item:norm(o['Item Nº']),raw:String(o['Item Nº']),desc:o['Item Description'],uom:o['UOM'],
+  q:(rem===''||rem===undefined)?num(o['Qty-Order']):num(rem),t:odt(o),disc:/discount|sponsor/i.test(o['Item Description']),i}});
+ if(!$('disc').checked)L=L.filter(l=>!l.disc);
+ const plan=$('prio').value==='plan';
+ L.sort((a,b)=>plan?((+a.pd||0)-(+b.pd||0))||(a.t-b.t)||(a.i-b.i):(a.t-b.t)||(a.i-b.i));
+ const left={};Object.keys(stock).forEach(k=>left[k]=Math.max(stock[k].tot,0));
+ L.forEach(l=>{const a=left[l.item]||0;l.rel=Math.min(a,l.q);l.short=l.q-l.rel;if(l.item in left)left[l.item]-=l.rel;
+  l.st=l.q===0?'Full':l.rel>=l.q?'Full':l.rel===0?'None':'Partial'});
+ const I={},S={},U={};
+ L.forEach(l=>{const it=I[l.item]||(I[l.item]={item:l.item,desc:(stock[l.item]||{}).desc||l.desc,uoms:new Set(),ord:0,disc:0,rel:0,short:0,so:new Set(),soShort:new Set(),inStock:l.item in stock});
+  it.uoms.add(l.uom);it.ord+=l.q;if(l.disc)it.disc+=l.q;it.rel+=l.rel;it.short+=l.short;it.so.add(l.so);if(l.short>0)it.soShort.add(l.so);
+  const s=S[l.so]||(S[l.so]={so:l.so,cust:l.cust,ch:l.ch,reg:l.reg,pd:l.pd,lines:0,full:0,ord:0,rel:0,miss:[]});
+  s.lines++;if(l.short===0)s.full++;s.ord+=l.q;s.rel+=l.rel;if(l.short>0)s.miss.push(l);
+  const u=U[l.uom]||(U[l.uom]={uom:l.uom,ord:0,rel:0});u.ord+=l.q;u.rel+=l.rel});
+ const items=Object.values(I).map(i=>{const s=stock[i.item]||{tot:0,WHA:0,WHB:0};return{...i,uom:[...i.uoms].join('/'),stk:s.tot,WHA:s.WHA,WHB:s.WHB,
+  left:Math.max(s.tot,0)-i.rel,pct:i.ord?i.rel/i.ord*100:100,st:i.short===0?'Available':i.rel===0?'NotAvailable':'Partial',nso:i.so.size,nsoS:i.soShort.size}}).sort((a,b)=>a.pct-b.pct||b.short-a.short);
+ const sos=Object.values(S).map(s=>({...s,st:s.full===s.lines?'Full':s.rel===0?'None':'Partial',pct:s.ord?s.rel/s.ord*100:100}));
+ const uoms=Object.values(U).map(u=>({...u,short:u.ord-u.rel,pct:u.ord?u.rel/u.ord*100:100}));
+ R={L,items,sos,uoms,stock};R.recs=recs();$('ex').disabled=false}
+
+function recs(){const {items,sos,L,stock}=R,r=[],c=s=>items.filter(i=>i.st===s);
+ const none=c('NotAvailable'),part=c('Partial'),ok=c('Available');
+ r.push(`<b>${ok.length}</b> of ${items.length} items have enough stock for all orders; <b>${part.length}</b> are partial and <b>${none.length}</b> have no stock to release.`);
+ if(none.length)r.push('No stock at all &mdash; inform Planning/Production and Sales: '+none.slice(0,12).map(i=>i.item).join(', ')+(none.length>12?' &hellip;':'')+'.');
+ const top=[...items].filter(i=>i.short>0).sort((a,b)=>b.short-a.short).slice(0,3);
+ if(top.length)r.push('Biggest shortages: '+top.map(i=>`${i.item} ${esc(i.desc)} (short ${fmt(i.short)} ${i.uom})`).join('; ')+'.');
+ const f=sos.filter(s=>s.st==='Full').length,p=sos.filter(s=>s.st==='Partial'),n=sos.filter(s=>s.st==='None').length;
+ r.push(`Release now: <b>${f}</b> SO fully releasable. <b>${p.length}</b> SO partial &mdash; confirm with Sales whether to ship partial or hold. <b>${n}</b> SO cannot release any line.`);
+ const near=p.filter(s=>s.miss.length<=1);if(near.length)r.push(`${near.length} partial SO are short on only 1 line (quick wins if that item is replenished): `+near.slice(0,8).map(s=>s.so).join(', ')+(near.length>8?' &hellip;':'')+'.');
+ const low=items.filter(i=>i.st==='Available'&&i.stk>0&&i.left/i.stk<0.1);if(low.length)r.push('Stock almost used up after release (&lt;10% left): '+low.slice(0,10).map(i=>i.item).join(', ')+' &mdash; reorder / check production plan.');
+ const hi=items.filter(i=>i.st==='Available'&&i.stk>0&&i.ord/i.stk>=0.5&&i.left/i.stk>=0.1);if(hi.length)r.push('High demand vs stock (orders &ge;50% of stock): '+hi.map(i=>i.item).join(', ')+'.');
+ const d=L.filter(l=>l.disc);if(d.length)r.push(`${d.length} Trade Discount (Sponsorship) lines use stock too (${fmt(d.reduce((a,l)=>a+l.q,0))} total) &mdash; included in the demand above.`);
+ const m=L.filter(l=>l.raw.trim()!==l.item);if(m.length)r.push(`${m.length} lines have item code with "-01" (${[...new Set(m.map(l=>l.raw))].join(', ')}); treated as the base item.`);
+ const ns=items.filter(i=>!i.inStock);if(ns.length)r.push('Items not found in the stock file (treated as no stock): '+ns.map(i=>i.item).join(', ')+'.');
+ const mu=[...new Set(L.map(l=>l.uom))];if(mu.length>1)r.push('Order UOM differs ('+mu.join(', ')+'); stock Balances are compared 1:1 with order qty &mdash; check UOM conversion if stock is stored in another unit.');
+ return r}
+
+const pb=p=>`<span class="bar"><i style="width:${Math.min(p,100)}%"></i></span>${p.toFixed(1)}%`;
+const tag=s=>`<span class="s ${s}">${s==='NotAvailable'?'Not available':s==='None'?'Not released':s}</span>`;
+const tbl=(h,rows)=>`<div class="sc"><table><tr>${h.map(x=>`<th>${x}</th>`).join('')}</tr>${rows.join('')}</table></div>`;
+function render(){const {items,sos,uoms,L,recs}=R;const cnt=(a,k,v)=>a.filter(x=>x[k]===v).length;
+ const tl=L.length,fl=L.filter(l=>l.short===0).length;
+ let h=`<div class="card"><h2>Overview</h2><div class="kpis">
+ <div class="k">Items<b>${items.length}</b></div><div class="k ok">Available<b>${cnt(items,'st','Available')}</b></div><div class="k wa">Partial<b>${cnt(items,'st','Partial')}</b></div><div class="k bad">Not available<b>${cnt(items,'st','NotAvailable')}</b></div>
+ <div class="k">Sale Orders<b>${sos.length}</b></div><div class="k ok">SO full release<b>${cnt(sos,'st','Full')}</b></div><div class="k wa">SO partial<b>${cnt(sos,'st','Partial')}</b></div><div class="k bad">SO not released<b>${cnt(sos,'st','None')}</b></div>
+ <div class="k">Lines released in full<b>${(fl/tl*100).toFixed(1)}%</b>${fl}/${tl}</div></div></div>`;
+ h+=`<div class="card"><h2>3. Release by Qty, UOM and %</h2>${tbl(['UOM','Qty Ordered','Qty Released','Qty Short','Release %'],uoms.map(u=>`<tr><td>${esc(u.uom)}</td><td class=n>${fmt(u.ord)}</td><td class=n>${fmt(u.rel)}</td><td class=n>${fmt(u.short)}</td><td>${pb(u.pct)}</td></tr>`))}</div>`;
+ h+=`<div class="card"><h2>Recommendations</h2><ul>${recs.map(x=>`<li>${x}</li>`).join('')}</ul></div>`;
+ h+=`<div class="card"><h2>1. Item available / not available</h2>${tbl(['Item Nº','Description','UOM','Qty Order','of which Discount','Stock WHA','Stock WHB','Stock Total','Release','Short','Release %','Stock left','SO','SO short','Status'],
+  items.map(i=>`<tr><td>${i.item}</td><td>${esc(i.desc)}</td><td>${esc(i.uom)}</td><td class=n>${fmt(i.ord)}</td><td class=n>${i.disc?fmt(i.disc):''}</td><td class=n>${fmt(i.WHA)}</td><td class=n>${fmt(i.WHB)}</td><td class=n>${fmt(i.stk)}</td><td class=n>${fmt(i.rel)}</td><td class=n>${fmt(i.short)}</td><td>${pb(i.pct)}</td><td class=n>${fmt(i.left)}</td><td class=n>${i.nso}</td><td class=n>${i.nsoS}</td><td>${tag(i.st)}</td></tr>`))}</div>`;
+ const miss=L.filter(l=>l.short>0).sort((a,b)=>String(a.so).localeCompare(String(b.so)));
+ h+=`<div class="card"><h2>2. SO Nº with items not available (${new Set(miss.map(l=>l.so)).size} SO, ${miss.length} lines)</h2>${tbl(['Sale Order Nº','Customer','Channel','Plan Delivery','Item Nº','Description','UOM','Qty Order','Release','Short','Line status'],
+  miss.map(l=>`<tr><td>${esc(l.so)}</td><td>${esc(l.cust)}</td><td>${esc(l.ch)}</td><td>${fd(l.pd)}</td><td>${l.item}</td><td>${esc(l.desc)}</td><td>${esc(l.uom)}</td><td class=n>${fmt(l.q)}</td><td class=n>${fmt(l.rel)}</td><td class=n>${fmt(l.short)}</td><td>${tag(l.st)}</td></tr>`))}</div>`;
+ h+=`<div class="card"><h2>Sale Order release status</h2>${tbl(['Sale Order Nº','Customer','Channel','Plan Delivery','Lines','Lines OK','Qty Order','Qty Release','Release %','Status'],
+  [...sos].sort((a,b)=>a.pct-b.pct).map(s=>`<tr><td>${esc(s.so)}</td><td>${esc(s.cust)}</td><td>${esc(s.ch)}</td><td>${fd(s.pd)}</td><td class=n>${s.lines}</td><td class=n>${s.full}</td><td class=n>${fmt(s.ord)}</td><td class=n>${fmt(s.rel)}</td><td>${pb(s.pct)}</td><td>${tag(s.st)}</td></tr>`))}</div>`;
+ $('out').innerHTML=h}
+
+function exportXlsx(){const {items,sos,uoms,L,recs}=R,wb=XLSX.utils.book_new();const add=(n,d)=>XLSX.utils.book_append_sheet(wb,Array.isArray(d[0])?XLSX.utils.aoa_to_sheet(d):XLSX.utils.json_to_sheet(d),n);
+ const cnt=(a,k,v)=>a.filter(x=>x[k]===v).length,tl=L.length,fl=L.filter(l=>l.short===0).length;
+ const plain=s=>s.replace(/<[^>]+>/g,'').replace(/&lt;/g,'<').replace(/&ge;/g,'>=').replace(/&hellip;/g,'...').replace(/&mdash;/g,'-');
+ add('Summary',[['Stock Released Sale Order - Summary'],[],['Items',items.length],['Items available',cnt(items,'st','Available')],['Items partial',cnt(items,'st','Partial')],['Items not available',cnt(items,'st','NotAvailable')],[],
+  ['Sale Orders',sos.length],['SO full release',cnt(sos,'st','Full')],['SO partial',cnt(sos,'st','Partial')],['SO not released',cnt(sos,'st','None')],['Lines released in full %',+(fl/tl*100).toFixed(1)],[],
+  ['UOM','Qty Ordered','Qty Released','Qty Short','Release %'],...uoms.map(u=>[u.uom,u.ord,u.rel,u.short,+u.pct.toFixed(1)]),[],['Recommendations'],...recs.map(x=>[plain(x)])]);
+ add('1_Item Summary',items.map(i=>({'Item Nº':i.item,Description:i.desc,UOM:i.uom,'Qty Order':i.ord,'Of which Discount':i.disc,'Stock WHA':i.WHA,'Stock WHB':i.WHB,'Stock Total':i.stk,Release:i.rel,Short:i.short,'Release %':+i.pct.toFixed(1),'Stock Left':i.left,'SO Count':i.nso,'SO Short':i.nsoS,Status:i.st==='NotAvailable'?'Not available':i.st})));
+ add('2_SO Not Available',L.filter(l=>l.short>0).map(l=>({'Sale Order Nº':l.so,Customer:l.cust,Channel:l.ch,'Plan Delivery':fd(l.pd),'Item Nº':l.item,Description:l.desc,UOM:l.uom,'Qty Order':l.q,Release:l.rel,Short:l.short,Status:l.st==='None'?'Not released':l.st})));
+ add('3_SO Release Status',sos.map(s=>({'Sale Order Nº':s.so,Customer:s.cust,Channel:s.ch,'Plan Delivery':fd(s.pd),Lines:s.lines,'Lines OK':s.full,'Qty Order':s.ord,'Qty Release':s.rel,'Release %':+s.pct.toFixed(1),Status:s.st==='None'?'Not released':s.st})));
+ add('Line Detail',L.map(l=>({'Sale Order Nº':l.so,Customer:l.cust,'Item Nº':l.item,Description:l.desc,UOM:l.uom,'Qty Order':l.q,Release:l.rel,Short:l.short,Status:l.st})));
+ XLSX.writeFile(wb,'Stock_Release_Summary_'+new Date().toISOString().slice(0,10)+'.xlsx')}
+</script></body></html>
